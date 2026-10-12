@@ -149,7 +149,7 @@ std::vector<Molecule> LibraryDialog::load_library() {
     }
 
     std::stable_sort(result.begin(), result.end(), [](const Molecule& a, const Molecule& b) {
-        return a.size() < b.size();
+        return QString::compare(a.get_name(), b.get_name(), Qt::CaseInsensitive) < 0;
     });
     return result;
 }

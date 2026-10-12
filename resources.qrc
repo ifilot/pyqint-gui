@@ -134,9 +134,12 @@
         <file>assets/molecules/caffeine.xyz</file>
         <file>assets/molecules/ch4.xyz</file>
         <file>assets/molecules/chlorobenzene.xyz</file>
+        <file>assets/molecules/cis-1,2-dichloroethene.xyz</file>
         <file>assets/molecules/co.xyz</file>
         <file>assets/molecules/co2.xyz</file>
         <file>assets/molecules/cubane.xyz</file>
+        <file>assets/molecules/cyclohexane-boat.xyz</file>
+        <file>assets/molecules/cyclohexane-chair.xyz</file>
         <file>assets/molecules/dodecahedrane.xyz</file>
         <file>assets/molecules/ethane.xyz</file>
         <file>assets/molecules/ethanol.xyz</file>
@@ -144,11 +147,14 @@
         <file>assets/molecules/h2.xyz</file>
         <file>assets/molecules/h2o.xyz</file>
         <file>assets/molecules/he.xyz</file>
+        <file>assets/molecules/hydrogen-peroxide.xyz</file>
         <file>assets/molecules/lih.xyz</file>
         <file>assets/molecules/n2.xyz</file>
         <file>assets/molecules/nh3.xyz</file>
         <file>assets/molecules/o2.xyz</file>
+        <file>assets/molecules/oxalic-acid.xyz</file>
         <file>assets/molecules/tetrahedrane.xyz</file>
+        <file>assets/molecules/trans-1,2-dichloroethene.xyz</file>
         <file>assets/molecules/trans-1-3-butadiene.xyz</file>
         <file>assets/python/praxis_export.py</file>
     </qresource>

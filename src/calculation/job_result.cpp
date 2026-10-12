@@ -227,6 +227,26 @@ std::shared_ptr<JobResult> JobResult::parse(const QByteArray& data) {
         }
     }
 
+    // Orbital coefficients are stored per orbital in JSON. Present C with
+    // basis functions as rows and molecular orbitals as columns, as in PyQInt.
+    for(size_t index = 0; index < res->orbital_sets.size(); ++index) {
+        const OrbitalSet& set = res->orbital_sets[index];
+        if(nbf == 0 || set.coefficients.empty()) {
+            continue;
+        }
+        DenseMatrix coefficients;
+        coefficients.label = QString("Coefficients (%1)").arg(set.label);
+        coefficients.rows = int(nbf);
+        coefficients.cols = int(set.coefficients.size());
+        coefficients.data.resize(nbf * set.coefficients.size());
+        for(int row = 0; row < coefficients.rows; ++row) {
+            for(int col = 0; col < coefficients.cols; ++col) {
+                coefficients.data[size_t(row) * coefficients.cols + col] = set.coefficients[col][row];
+            }
+        }
+        res->matrices.emplace_back(QString("coefficients_%1").arg(index), std::move(coefficients));
+    }
+
     // populations
     const QJsonObject pop = root["populations"].toObject();
     res->mulliken = to_vector(pop["mulliken"]);

@@ -100,6 +100,14 @@ or grid resolution does not require running Python again. The same holds for
 the bonding analysis, which uses the stored Fock, overlap and density matrices
 and gives the same values as `pyqint.PopulationAnalysis`.
 
+In the **Matrices** tab, select a matrix and click **Export…** to save it as an
+Excel workbook (`.xlsx`), CSV (`.csv`), or tab-separated plain text (`.txt`).
+Exports contain the numeric matrix without headers, using the full stored
+precision rather than the rounded values displayed in the table.
+The selector also includes coefficient matrices for each orbital set (canonical,
+Foster–Boys, and separate α/β sets when present), with basis functions as rows
+and molecular orbitals as columns.
+
 ## Compilation
 
 ### Ubuntu / Debian

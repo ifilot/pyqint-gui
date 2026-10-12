@@ -20,18 +20,29 @@
  **************************************************************************/
 
 #include <cmath>
+#include <limits>
 #include <map>
 #include <utility>
 
 #include <QDir>
+#include <QComboBox>
+#include <QDataStream>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QLocale>
 #include <QProcess>
+#include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QTableWidget>
+#include <QXmlStreamReader>
 #include <QtTest>
 
 #include "calculation/job_result.h"
+#include "calculation/matrix_export.h"
 #include "calculation/job_runner.h"
 #include "calculation/population_analysis.h"
 #include "calculation/python_environment.h"
@@ -40,6 +51,7 @@
 #include "calculation/job_spec.h"
 #include "data/molecule.h"
 #include "gui/scene.h"
+#include "gui/results_panel.h"
 #include "orbitals/marching_cubes.h"
 #include "orbitals/orbital_builder.h"
 #include "orbitals/scalar_field.h"
@@ -96,6 +108,231 @@ class TestCore : public QObject {
     Q_OBJECT
 
 private slots:
+    void matrix_export_delimited_data() {
+        QTest::addColumn<int>("format");
+        QTest::addColumn<QChar>("separator");
+        QTest::newRow("csv") << int(MatrixExportFormat::Csv) << QChar(',');
+        QTest::newRow("text") << int(MatrixExportFormat::Text) << QChar('\t');
+    }
+
+    void matrix_export_delimited() {
+        QFETCH(int, format);
+        QFETCH(QChar, separator);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        DenseMatrix matrix;
+        matrix.rows = 2;
+        matrix.cols = 3;
+        matrix.data = {1.2345678901234567, -2.5, 0.0, 1e-200, 1e200, -0.0000123456789};
+        const QString path = dir.filePath("matrix");
+        const QLocale original = QLocale();
+        QLocale::setDefault(QLocale(QLocale::Dutch, QLocale::Netherlands));
+        export_matrix(matrix, path, MatrixExportFormat(format));
+        QLocale::setDefault(original);
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto rows = QString::fromUtf8(file.readAll()).trimmed().split('\n');
+        QCOMPARE(rows.size(), matrix.rows);
+        for(int row = 0; row < matrix.rows; ++row) {
+            const auto columns = rows[row].split(separator);
+            QCOMPARE(columns.size(), matrix.cols);
+            for(int col = 0; col < matrix.cols; ++col) {
+                bool ok;
+                const double value = columns[col].toDouble(&ok);
+                QVERIFY(ok);
+                QCOMPARE(value, matrix(row, col));
+            }
+        }
+    }
+
+    void matrix_export_excel() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        DenseMatrix matrix;
+        matrix.rows = 2;
+        matrix.cols = 28; // exercise column references beyond Z
+        for(int i = 0; i < matrix.rows * matrix.cols; ++i) {
+            matrix.data.push_back((i - 30) * 1.2345678901234567);
+        }
+        const QString path = dir.filePath("matrix.xlsx");
+        export_matrix(matrix, path, MatrixExportFormat::Excel);
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QDataStream zip(&file);
+        zip.setByteOrder(QDataStream::LittleEndian);
+        QMap<QByteArray, QByteArray> parts;
+        while(!file.atEnd()) {
+            quint32 signature;
+            zip >> signature;
+            if(signature == 0x02014b50u) {
+                break;
+            }
+            QCOMPARE(signature, 0x04034b50u);
+            quint16 version, flags, compression, time, date, name_size, extra_size;
+            quint32 crc, compressed_size, size;
+            zip >> version >> flags >> compression >> time >> date >> crc
+                >> compressed_size >> size >> name_size >> extra_size;
+            QCOMPARE(compression, quint16(0));
+            QCOMPARE(compressed_size, size);
+            const QByteArray name = file.read(name_size);
+            file.read(extra_size);
+            const QByteArray data = file.read(size);
+            QCOMPARE(data.size(), qsizetype(size));
+            parts.insert(name, data);
+        }
+        QCOMPARE(parts.size(), 5);
+        QVERIFY(parts.contains("[Content_Types].xml"));
+        QVERIFY(parts.contains("_rels/.rels"));
+        QVERIFY(parts.contains("xl/workbook.xml"));
+        QVERIFY(parts.contains("xl/_rels/workbook.xml.rels"));
+        QXmlStreamReader xml(parts.value("xl/worksheets/sheet1.xml"));
+        QStringList references;
+        std::vector<double> values;
+        while(!xml.atEnd()) {
+            xml.readNext();
+            if(xml.isStartElement() && xml.name() == QStringLiteral("c")) {
+                references << xml.attributes().value("r").toString();
+            } else if(xml.isStartElement() && xml.name() == QStringLiteral("v")) {
+                bool ok;
+                values.push_back(xml.readElementText().toDouble(&ok));
+                QVERIFY(ok);
+            }
+        }
+        QVERIFY2(!xml.hasError(), qPrintable(xml.errorString()));
+        QVERIFY(values == matrix.data);
+        QCOMPARE(references[26], QString("AA1"));
+        QCOMPARE(references.back(), QString("AB2"));
+    }
+
+    void matrix_export_errors() {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath("existing.csv");
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("keep me");
+        file.close();
+        DenseMatrix matrix;
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, export_matrix(matrix, path, MatrixExportFormat::Csv));
+        matrix.rows = 1;
+        matrix.cols = 2;
+        matrix.data = {1.0};
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, export_matrix(matrix, path, MatrixExportFormat::Csv));
+        matrix.data = {1.0, std::numeric_limits<double>::infinity()};
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error, export_matrix(matrix, path, MatrixExportFormat::Excel));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("keep me"));
+        file.close();
+        matrix.data = {1.0, 2.0};
+        QVERIFY_THROWS_EXCEPTION(std::runtime_error,
+                                export_matrix(matrix, dir.filePath("absent/matrix.csv"), MatrixExportFormat::Csv));
+    }
+
+    void matrix_export_availability() {
+        ResultsPanel panel;
+        auto* button = panel.findChild<QPushButton*>("export_matrix_button");
+        auto* selector = panel.findChild<QComboBox*>("matrix_selector");
+        QVERIFY(button);
+        QVERIFY(selector);
+        QVERIFY(!button->isEnabled());
+        auto result = JobResult::load(QString(TEST_DATA_DIR) + "/h2o_rhf_fb.json");
+        panel.set_result(result, QString());
+        QCOMPARE(selector->count(), int(result->matrices.size()));
+        for(int i = 0; i < selector->count(); ++i) {
+            selector->setCurrentIndex(i);
+            QVERIFY(button->isEnabled());
+        }
+        selector->setCurrentIndex(-1);
+        QVERIFY(!button->isEnabled());
+        panel.clear();
+        QVERIFY(!button->isEnabled());
+    }
+
+    void coefficient_matrices_data() {
+        QTest::addColumn<QString>("filename");
+        QTest::addColumn<bool>("rectangular");
+        QTest::newRow("canonical-and-localized") << QString("h2o_rhf_fb.json") << false;
+        QTest::newRow("alpha-and-beta") << QString("o2_uhf.json") << false;
+        QTest::newRow("dft") << QString("h2o_svwn5.json") << false;
+        QTest::newRow("rectangular") << QString("h2o_rhf_fb.json") << true;
+    }
+
+    void coefficient_matrices() {
+        QFETCH(QString, filename);
+        QFETCH(bool, rectangular);
+        QFile input(QString(TEST_DATA_DIR) + "/" + filename);
+        QVERIFY(input.open(QIODevice::ReadOnly));
+        auto document = QJsonDocument::fromJson(input.readAll());
+        if(rectangular) {
+            auto root = document.object();
+            auto sets = root["orbitals"].toArray();
+            for(int i = 0; i < sets.size(); ++i) {
+                auto set = sets[i].toObject();
+                for(const auto& key : {"energies", "occupations", "coefficients"}) {
+                    auto values = set[key].toArray();
+                    while(values.size() > 3) {
+                        values.removeLast();
+                    }
+                    set[key] = values;
+                }
+                sets[i] = set;
+            }
+            root["orbitals"] = sets;
+            document.setObject(root);
+        }
+        auto result = JobResult::parse(document.toJson());
+        ResultsPanel panel;
+        panel.set_result(result, QString());
+        auto* selector = panel.findChild<QComboBox*>("matrix_selector");
+        auto* table = panel.findChild<QTableWidget*>("matrix_table");
+        auto* export_button = panel.findChild<QPushButton*>("export_matrix_button");
+        QVERIFY(selector);
+        QVERIFY(table);
+        QVERIFY(export_button);
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        for(size_t i = 0; i < result->orbital_sets.size(); ++i) {
+            const auto& set = result->orbital_sets[i];
+            const QString key = QString("coefficients_%1").arg(i);
+            const DenseMatrix* matrix = result->find_matrix(key);
+            QVERIFY(matrix);
+            QCOMPARE(matrix->rows, int(result->basis->size()));
+            QCOMPARE(matrix->cols, int(set.size()));
+            const int selected = selector->findData(key);
+            QVERIFY(selected >= 0);
+            QCOMPARE(selector->itemText(selected), QString("Coefficients (%1)").arg(set.label));
+            selector->setCurrentIndex(selected);
+            QVERIFY(export_button->isEnabled());
+            QCOMPARE(table->rowCount(), matrix->rows);
+            QCOMPARE(table->columnCount(), matrix->cols);
+            for(int row = 0; row < matrix->rows; ++row) {
+                QCOMPARE(table->verticalHeaderItem(row)->text(),
+                         QString::fromStdString((*result->basis)[row].label));
+                for(int col = 0; col < matrix->cols; ++col) {
+                    QCOMPARE((*matrix)(row, col), set.coefficients[col][row]);
+                    QCOMPARE(table->item(row, col)->data(Qt::UserRole).toDouble(), set.coefficients[col][row]);
+                    QCOMPARE(table->horizontalHeaderItem(col)->text(), QString("MO %1").arg(col + 1));
+                }
+            }
+            const QString path = dir.filePath(key + ".csv");
+            export_matrix(*matrix, path, MatrixExportFormat::Csv);
+            QFile output(path);
+            QVERIFY(output.open(QIODevice::ReadOnly));
+            const auto rows = QString::fromUtf8(output.readAll()).trimmed().split('\n');
+            QCOMPARE(rows.size(), matrix->rows);
+            for(int row = 0; row < matrix->rows; ++row) {
+                const auto columns = rows[row].split(',');
+                QCOMPARE(columns.size(), matrix->cols);
+                for(int col = 0; col < matrix->cols; ++col) {
+                    QCOMPARE(columns[col].toDouble(), set.coefficients[col][row]);
+                }
+            }
+        }
+        selector->setCurrentIndex(selector->findData("overlap"));
+        QCOMPARE(table->horizontalHeaderItem(0)->text(),
+                 QString::fromStdString((*result->basis)[0].label));
+    }
+
     // ------------------------------------------------------------------
     // molecules
     // ------------------------------------------------------------------

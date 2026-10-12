@@ -86,6 +86,7 @@ private:
     // matrices
     QWidget* tab_matrices;
     QComboBox* combo_matrix;
+    QPushButton* button_export_matrix;
     QTableWidget* table_matrix;
     QLabel* label_matrix_info;
 
@@ -157,6 +158,7 @@ private:
     void fill_diagram();
     void fill_populations();
     void fill_matrix();
+    void export_selected_matrix();
     void fill_optimization();
 
     void update_contributions();

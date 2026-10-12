@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-12
+
+### Added
+- Added cis- and trans-1,2-dichloroethene, boat and chair cyclohexane, hydrogen peroxide, and oxalic acid to the molecule library
+- Added export of any matrix as an Excel workbook, CSV, or tab-separated plain text with full stored precision
+- Added coefficient matrices for all available orbital sets, with basis functions as rows and molecular orbitals as columns
+
+### Changed
+- Sorted the molecule library alphabetically by name, ignoring capitalization
+
 ## [0.3.0] - 2026-09-30
 
 Tested with PyQInt 1.4.3, PyDFT 1.0.0, Python 3.12 and uv 0.12.20.

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # IMPORTANT: must be set before project()
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
-project(praxis VERSION 0.3.0 LANGUAGES CXX)
+project(praxis VERSION 0.4.0 LANGUAGES CXX)
 
 # =========================
 # Version information

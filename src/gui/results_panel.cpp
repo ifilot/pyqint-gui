@@ -31,11 +31,14 @@
 #include <QComboBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QSignalBlocker>
@@ -48,6 +51,7 @@
 #include <QVBoxLayout>
 
 #include "calculation/job_spec.h"
+#include "calculation/matrix_export.h"
 #include "data/units.h"
 #include "icons.h"
 #include "line_plot_widget.h"
@@ -274,10 +278,18 @@ QWidget* ResultsPanel::build_matrices_tab() {
     auto* lsel = new QHBoxLayout;
     lsel->addWidget(new QLabel("Matrix:"));
     this->combo_matrix = new QComboBox;
+    this->combo_matrix->setObjectName("matrix_selector");
     lsel->addWidget(this->combo_matrix, 1);
+    this->button_export_matrix = new QPushButton("Export...");
+    this->button_export_matrix->setObjectName("export_matrix_button");
+    this->button_export_matrix->setEnabled(false);
+    this->button_export_matrix->setToolTip("Save the selected matrix as Excel, CSV or plain text at full precision.");
+    lsel->addWidget(this->button_export_matrix);
+    connect(this->button_export_matrix, &QPushButton::clicked, this, &ResultsPanel::export_selected_matrix);
     layout->addLayout(lsel);
 
     this->table_matrix = new QTableWidget;
+    this->table_matrix->setObjectName("matrix_table");
     this->table_matrix->setEditTriggers(QAbstractItemView::NoEditTriggers);
     this->table_matrix->horizontalHeader()->setDefaultSectionSize(72);
     layout->addWidget(this->table_matrix, 1);
@@ -351,6 +363,7 @@ void ResultsPanel::clear() {
     this->label_contributions->clear();
     this->label_orbital_info->clear();
     this->label_matrix_info->clear();
+    this->button_export_matrix->setEnabled(false);
     this->button_gallery->setEnabled(false);
     this->button_bonding->setEnabled(false);
     this->button_localize->setEnabled(false);
@@ -682,6 +695,7 @@ void ResultsPanel::fill_populations() {
 void ResultsPanel::fill_matrix() {
     this->table_matrix->clear();
     const int m = this->combo_matrix->currentIndex();
+    this->button_export_matrix->setEnabled(false);
     if(!this->result || m < 0 || m >= (int)this->result->matrices.size()) {
         this->table_matrix->setRowCount(0);
         this->table_matrix->setColumnCount(0);
@@ -689,6 +703,9 @@ void ResultsPanel::fill_matrix() {
     }
 
     const DenseMatrix& mat = this->result->matrices[m].second;
+    const QString& key = this->result->matrices[m].first;
+    const bool coefficients = key.startsWith("coefficients_");
+    this->button_export_matrix->setEnabled(mat.rows > 0 && mat.cols > 0);
     this->table_matrix->setRowCount(mat.rows);
     this->table_matrix->setColumnCount(mat.cols);
 
@@ -699,7 +716,13 @@ void ResultsPanel::fill_matrix() {
     if((int)labels.size() == mat.rows) {
         this->table_matrix->setVerticalHeaderLabels(labels);
     }
-    if((int)labels.size() == mat.cols && this->result->matrices[m].first != "transform") {
+    if(coefficients) {
+        QStringList orbitals;
+        for(int col = 0; col < mat.cols; ++col) {
+            orbitals << QString("MO %1").arg(col + 1);
+        }
+        this->table_matrix->setHorizontalHeaderLabels(orbitals);
+    } else if((int)labels.size() == mat.cols && key != "transform") {
         this->table_matrix->setHorizontalHeaderLabels(labels);
     }
 
@@ -731,8 +754,62 @@ void ResultsPanel::fill_matrix() {
                                         : "F = H + G(P): Fock matrix at convergence."},
         {"density", "P: density matrix; the diagonal of PS gives the Mulliken populations."},
     };
-    auto it = info.find(this->result->matrices[m].first);
-    this->label_matrix_info->setText(it != info.end() ? it->second : QString());
+    auto it = info.find(key);
+    this->label_matrix_info->setText(coefficients
+        ? QString("C: molecular orbital coefficients in ψᵢ = Σμ Cμᵢ φμ. "
+                  "Rows are basis functions; columns are molecular orbitals.")
+        : (it != info.end() ? it->second : QString()));
+}
+
+void ResultsPanel::export_selected_matrix() {
+    const int index = this->combo_matrix->currentIndex();
+    const auto export_result = this->result;
+    if(!export_result || index < 0 || index >= int(export_result->matrices.size())) {
+        return;
+    }
+
+    const QString excel_filter = "Excel workbook (*.xlsx)";
+    const QString csv_filter = "CSV file (*.csv)";
+    const QString text_filter = "Plain text file (*.txt)";
+    QString selected_filter = excel_filter;
+    const QString suggested = QDir(this->job_dir).filePath(export_result->matrices[index].first);
+    QString path = QFileDialog::getSaveFileName(this, "Export matrix", suggested,
+                                              excel_filter + ";;" + csv_filter + ";;" + text_filter,
+                                              &selected_filter);
+    if(path.isEmpty()) {
+        return;
+    }
+
+    MatrixExportFormat format = MatrixExportFormat::Excel;
+    QString extension = "xlsx";
+    if(selected_filter == csv_filter) {
+        format = MatrixExportFormat::Csv;
+        extension = "csv";
+    } else if(selected_filter == text_filter) {
+        format = MatrixExportFormat::Text;
+        extension = "txt";
+    }
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    // An explicitly typed supported extension takes precedence over the filter.
+    if(suffix == "xlsx") {
+        format = MatrixExportFormat::Excel;
+    } else if(suffix == "csv") {
+        format = MatrixExportFormat::Csv;
+    } else if(suffix == "txt") {
+        format = MatrixExportFormat::Text;
+    } else {
+        path += "." + extension;
+        if(QFileInfo::exists(path) &&
+           QMessageBox::question(this, "Replace file?", "The file already exists. Replace it?",
+                                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+    }
+    try {
+        export_matrix(export_result->matrices[index].second, path, format);
+    } catch(const std::exception& error) {
+        QMessageBox::warning(this, "Cannot export matrix", QString::fromUtf8(error.what()));
+    }
 }
 
 void ResultsPanel::fill_optimization() {
